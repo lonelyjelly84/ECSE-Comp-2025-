@@ -1,6 +1,6 @@
 import time, math
 
-# Mock to try it on Desktop (online simulators don't run python)
+# Mock to try it on Desktop
 try:
     import RPi.GPIO as GPIO
 except ImportError:
