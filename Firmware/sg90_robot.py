@@ -4,32 +4,46 @@ import time, math
 try:
     import RPi.GPIO as GPIO
 except ImportError:
+
     class MockGPIO:
         BCM = "BCM"
         BOARD = "BOARD"
         OUT = "OUT"
 
-        def setmode(self, mode): print(f"[MOCK] setmode({mode})")
-        def setwarnings(self, flag): print(f"[MOCK] setwarnings({flag})")
-        def setup(self, pin, mode): print(f"[MOCK] setup(pin={pin}, mode={mode})")
-        def cleanup(self): print("[MOCK] cleanup()")
+        def setmode(self, mode):
+            print(f"[MOCK] setmode({mode})")
+
+        def setwarnings(self, flag):
+            print(f"[MOCK] setwarnings({flag})")
+
+        def setup(self, pin, mode):
+            print(f"[MOCK] setup(pin={pin}, mode={mode})")
+
+        def cleanup(self):
+            print("[MOCK] cleanup()")
 
         class PWM:
             def __init__(self, pin, freq):
                 self.pin = pin
                 self.freq = freq
                 print(f"[MOCK] PWM(pin={pin}, freq={freq})")
-            def start(self, duty): print(f"[MOCK] start(duty={duty})")
-            def ChangeDutyCycle(self, duty): print(f"[MOCK] ChangeDutyCycle(duty={duty})")
-            def stop(self): print(f"[MOCK] stop()")
+
+            def start(self, duty):
+                print(f"[MOCK] start(duty={duty})")
+
+            def ChangeDutyCycle(self, duty):
+                print(f"[MOCK] ChangeDutyCycle(duty={duty})")
+
+            def stop(self):
+                print(f"[MOCK] stop()")
 
     GPIO = MockGPIO()
 
-# Servo Configuration 
+# Servo Configuration
 servo_pins = [12, 13]  # BOARD pin numbers for left and right servo
-FREQ = 50              # 50Hz for SG90
+FREQ = 50  # 50Hz for SG90
 
-# Setup GPIO and PWM 
+# Setup GPIO and PWM
 GPIO.setmode(GPIO.BOARD)
 pwms = []
 
@@ -43,7 +57,8 @@ for pin in servo_pins:
 left_pwm = pwms[0]
 right_pwm = pwms[1]
 
-# Walk Function 
+
+# Walk Function
 def walk(pwm, start_angle, end_angle, duration=0.5, steps=20):
     """
     Walk a servo smoothly from start_angle to end_angle.
@@ -57,7 +72,8 @@ def walk(pwm, start_angle, end_angle, duration=0.5, steps=20):
         pwm.ChangeDutyCycle(duty)
         time.sleep(duration / steps)
 
-# Robot Class 
+
+# Robot Class
 class SG90Robot:
     def __init__(self, left_servo, right_servo):
         self.left = left_servo
@@ -65,13 +81,13 @@ class SG90Robot:
         self.center()
 
     def center(self):
-        #Move both servos to middle (90 degrees)
+        # Move both servos to middle (90 degrees)
         walk(self.left, 90, 90, duration=0.3)
         walk(self.right, 90, 90, duration=0.3)
         time.sleep(0.1)
 
     def forward(self, step_time=0.6):
-        #Take a forward step (left then right)
+        # Take a forward step (left then right)
         print("Forward")
         walk(self.left, 90, 120, duration=step_time)
         walk(self.right, 90, 90, duration=step_time)
@@ -80,7 +96,7 @@ class SG90Robot:
         walk(self.right, 90, 60, duration=step_time)
 
     def backward(self, step_time=0.6):
-        #Take a backward step (left then right)
+        # Take a backward step (left then right)
         print("Back")
         walk(self.left, 90, 60, duration=step_time)
         walk(self.right, 90, 90, duration=step_time)
@@ -89,7 +105,7 @@ class SG90Robot:
         walk(self.right, 90, 120, duration=step_time)
 
     def turn_left(self, step_time=0.5):
-       #Pivot left in place
+        # Pivot left in place
         print("left")
         walk(self.left, 90, 60, duration=step_time)
         walk(self.right, 90, 90, duration=step_time)
@@ -98,7 +114,7 @@ class SG90Robot:
         walk(self.right, 90, 60, duration=step_time)
 
     def turn_right(self, step_time=0.5):
-        #Pivot right in place
+        # Pivot right in place
         print("right")
         walk(self.left, 90, 120, duration=step_time)
         walk(self.right, 90, 90, duration=step_time)
@@ -107,10 +123,11 @@ class SG90Robot:
         walk(self.right, 90, 120, duration=step_time)
 
     def stop(self):
-        #Return to neutral
+        # Return to neutral
         self.center()
 
 
+# We should define a Main() and run this on there
 def main():
     robot = SG90Robot(left_pwm, right_pwm)
 
@@ -125,6 +142,7 @@ def main():
         left_pwm.stop()
         right_pwm.stop()
         GPIO.cleanup()
+
 
 if __name__ == "__main__":
     main()
