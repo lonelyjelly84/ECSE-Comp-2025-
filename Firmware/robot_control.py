@@ -74,7 +74,7 @@ def walk(pwm, start_angle, end_angle, duration=0.5, steps=20):
 
 
 # Robot Class
-class SG90Robot:
+class ECSERobot:
     def __init__(self, left_servo, right_servo):
         self.left = left_servo
         self.right = right_servo
@@ -129,7 +129,7 @@ class SG90Robot:
 
 # We should define a Main() and run this on there
 def main():
-    robot = SG90Robot(left_pwm, right_pwm)
+    robot = ECSERobot(left_pwm, right_pwm)
 
     try:
         robot.forward()
