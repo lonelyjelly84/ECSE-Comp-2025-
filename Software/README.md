@@ -1,27 +1,60 @@
-# ECSE Robot Vision Navigation
+# ECSE Robot Navigation System
 
-Simple vision-based navigation system for the ECSE Robot.
+**Intelligent robot navigation with automatic mode selection**
 
-## Core Flow
+## How It Works
+
 ```
-RPi Camera → OpenCV → PyTorch YOLO → Movement Decision → Robot Commands
+Robot Start → Check Camera → AI Vision OR Sensor Fallback → Navigate
+```
+
+### **Primary Mode: Vision Navigation**
+- **Camera**: RPi Camera Module via OpenCV
+- **AI Processing**: PyTorch YOLOv5 object detection (offline)
+- **Smart Movement**: Intelligent obstacle avoidance
+
+### **Fallback Mode: Sensor Navigation**  
+- **Sensors**: HC-SR04 ultrasonic distance sensors
+- **Movement**: Distance-based obstacle avoidance
+- **Reliability**: Works without camera dependencies
+
+## Quick Start
+
+### **Main Program:**
+```bash
+python main.py
+```
+The system automatically detects your hardware and chooses the best navigation mode!
+
+### **Individual Modules (Optional):**
+```bash
+python vision_navigation.py # Camera mode only
+python sensor_navigation.py # Sensor mode only
 ```
 
 ## Files
-- `vision_navigation.py` - Main navigation system
-- `models/` - Pre-downloaded YOLO model (offline)
-- `requirements.txt` - Dependencies
-- `../Firmware/robot_control.py` - Robot movement functions (hardware control)
+- **`main.py`** - **MAIN PROGRAM** (run this!)
+- `vision_navigation.py` - Camera + AI navigation module
+- `sensor_navigation.py` - Ultrasonic sensor navigation module
+- `models/yolov5s_full.pt` - Pre-downloaded YOLO model (14MB, offline)
+- `requirements.txt` - Python dependencies
+- `../Firmware/robot_control.py` - Robot hardware control
 
-## Installation
+## Installation on Raspberry Pi
 ```bash
-pip install opencv-python torch torchvision numpy
+# 1. Copy project to RPi
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Run the system
+python main.py
 ```
 
-## Usage
-```bash
-python vision_navigation.py
-```
+## System Intelligence
+- **Auto-detects camera availability**
+- **Checks all dependencies automatically**  
+- **Falls back gracefully if hardware unavailable**
+- **Works offline with pre-downloaded AI model**
 
 ## Offline Model
 The YOLO model is pre-downloaded in the `models/` folder for offline use:

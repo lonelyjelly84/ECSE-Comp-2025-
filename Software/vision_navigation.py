@@ -236,7 +236,10 @@ class VisionNavigator:
 
 
 def main():
-    """Run the navigation system"""
+    """Development/testing entry point - use main.py for normal operation"""
+    print("Vision Navigation - Development Mode")
+    print("For normal operation, run: python main.py")
+    
     navigator = VisionNavigator()
     
     if navigator.initialize():
