@@ -4,7 +4,12 @@ ECSE Integrated Robot System
 Combines face recognition + arm movements + personality + sensors + state machine
 """
 
-import time, math, smbus, pygame, threading, random, sys, os
+import time, math, threading, random, sys, os
+try:
+    import smbus2 as smbus  # Use smbus2 package but keep smbus interface
+except ImportError:
+    import smbus  # Fallback to system smbus if available
+import pygame
 import numpy as np
 
 # Add firmware path to access robot controller
