@@ -1,147 +1,169 @@
-import time, math
+import time
+import math
 
-# Mock to try it on Desktop
+# Use gpiozero for servo control (pre-installed on RPi)
 try:
-    import RPi.GPIO as GPIO
+    from gpiozero import Servo
+    from gpiozero.pins.pigpio import PiGPIOFactory
+    
+    # Try to use pigpio for better servo control, fallback to default
+    try:
+        pin_factory = PiGPIOFactory()
+        GPIO_AVAILABLE = True
+        print("[INFO] Using pigpio pin factory for precise servo control")
+    except:
+        pin_factory = None
+        GPIO_AVAILABLE = True
+        print("[INFO] Using default pin factory for servo control")
+        
 except ImportError:
+    # Mock for desktop testing
+    class MockServo:
+        def __init__(self, pin):
+            self.pin = pin
+            self._value = 0
+            print(f"[MOCK] Servo created on pin {pin}")
+            
+        @property
+        def value(self):
+            return self._value
+            
+        @value.setter
+        def value(self, val):
+            self._value = val
+            print(f"[MOCK] Servo pin {self.pin} set to {val}")
+            
+        def close(self):
+            print(f"[MOCK] Servo pin {self.pin} closed")
+    
+    Servo = MockServo
+    pin_factory = None
+    GPIO_AVAILABLE = False
 
-    class MockGPIO:
-        BCM = "BCM"
-        BOARD = "BOARD"
-        OUT = "OUT"
+# Convert BOARD pin numbers to GPIO numbers (for gpiozero)
+# BOARD pins 12, 13 = GPIO pins 18, 19
+servo_gpio_pins = [18, 19]  # GPIO pins for servo control
 
-        def setmode(self, mode):
-            print(f"[MOCK] setmode({mode})")
+# Create servo objects
+servo1 = None
+servo2 = None
 
-        def setwarnings(self, flag):
-            print(f"[MOCK] setwarnings({flag})")
+def setup_servos():
+    """Initialize servo objects"""
+    global servo1, servo2
+    
+    if GPIO_AVAILABLE:
+        if pin_factory:
+            servo1 = Servo(servo_gpio_pins[0], pin_factory=pin_factory)
+            servo2 = Servo(servo_gpio_pins[1], pin_factory=pin_factory)
+        else:
+            servo1 = Servo(servo_gpio_pins[0])
+            servo2 = Servo(servo_gpio_pins[1])
+        print(f"[INFO] Servos initialized on GPIO pins {servo_gpio_pins}")
+    else:
+        servo1 = Servo(servo_gpio_pins[0])
+        servo2 = Servo(servo_gpio_pins[1])
+        print("[MOCK] Servo objects created")
 
-        def setup(self, pin, mode):
-            print(f"[MOCK] setup(pin={pin}, mode={mode})")
+# Initialize servos
+setup_servos()
 
-        def cleanup(self):
-            print("[MOCK] cleanup()")
-
-        class PWM:
-            def __init__(self, pin, freq):
-                self.pin = pin
-                self.freq = freq
-                print(f"[MOCK] PWM(pin={pin}, freq={freq})")
-
-            def start(self, duty):
-                print(f"[MOCK] start(duty={duty})")
-
-            def ChangeDutyCycle(self, duty):
-                print(f"[MOCK] ChangeDutyCycle(duty={duty})")
-
-            def stop(self):
-                print(f"[MOCK] stop()")
-
-    GPIO = MockGPIO()
-
-# Servo Configuration
-servo_pins = [12, 13]  # BOARD pin numbers for left and right servo
-FREQ = 50  # 50Hz for SG90
-
-# Setup GPIO and PWM
-GPIO.setmode(GPIO.BOARD)
-pwms = []
-
-for pin in servo_pins:
-    GPIO.setup(pin, GPIO.OUT)
-    pwm = GPIO.PWM(pin, FREQ)
-    pwm.start(0)  # start with 0% duty cycle
-    pwms.append(pwm)
-
-# Assign left and right PWM objects
-left_pwm = pwms[0]
-right_pwm = pwms[1]
-
-
-# Walk Function
-def walk(pwm, start_angle, end_angle, duration=0.5, steps=20):
+def move_servo_smooth(servo, start_pos, end_pos, duration=0.5, steps=20):
     """
-    Walk a servo smoothly from start_angle to end_angle.
-    Uses cosine easing for smoother gait.
+    Move a servo smoothly from start_pos to end_pos.
+    gpiozero servo values range from -1 (0°) to 1 (180°), 0 is 90°
     """
+    if not servo:
+        print("[ERROR] Servo not initialized")
+        return
+        
     for i in range(steps + 1):
         t = i / steps
-        eased = 0.5 * (1 - math.cos(math.pi * t))  # cosine ease
-        angle = start_angle + (end_angle - start_angle) * eased
-        duty = 2.5 + (angle / 180.0) * 10
-        pwm.ChangeDutyCycle(duty)
+        # Cosine easing for smoother movement
+        eased = 0.5 * (1 - math.cos(math.pi * t))
+        pos = start_pos + (end_pos - start_pos) * eased
+        servo.value = pos
         time.sleep(duration / steps)
 
+def angle_to_servo_value(angle):
+    """Convert angle (0-180°) to gpiozero servo value (-1 to 1)"""
+    return (angle - 90) / 90.0
 
-# Robot Class
-class ECSERobot:
-    def __init__(self, left_servo, right_servo):
-        self.left = left_servo
-        self.right = right_servo
+# Arm Robot Class
+class ArmRobot:
+    def __init__(self):
+        self.servo1 = servo1
+        self.servo2 = servo2
         self.center()
 
     def center(self):
-        # Move both servos to middle (90 degrees)
-        walk(self.left, 90, 90, duration=0.3)
-        walk(self.right, 90, 90, duration=0.3)
-        time.sleep(0.1)
+        """Move both servos to middle (90 degrees = 0 value)"""
+        if self.servo1 and self.servo2:
+            self.servo1.value = 0  # 90 degrees
+            self.servo2.value = 0  # 90 degrees
+            time.sleep(0.3)
+            print("[INFO] Arms centered")
 
-    def forward(self, step_time=0.6):
-        # Take a forward step (left then right)
-        print("Forward")
-        walk(self.left, 90, 120, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
+    def raise_arm(self, duration=1.0):
+        """Raise the arm when face is detected"""
+        print("Raising arm - Face detected!")
+        if self.servo1 and self.servo2:
+            # Convert angles to servo values: 45° = -0.5, 135° = 0.5
+            move_servo_smooth(self.servo1, 0, angle_to_servo_value(45), duration)
+            move_servo_smooth(self.servo2, 0, angle_to_servo_value(135), duration)
+            time.sleep(0.2)
 
-        walk(self.left, 120, 90, duration=step_time)
-        walk(self.right, 90, 60, duration=step_time)
+    def lower_arm(self, duration=1.0):
+        """Lower the arm back to neutral position"""
+        print("Lowering arm")
+        if self.servo1 and self.servo2:
+            move_servo_smooth(self.servo1, self.servo1.value, 0, duration)
+            move_servo_smooth(self.servo2, self.servo2.value, 0, duration)
+            time.sleep(0.2)
 
-    def backward(self, step_time=0.6):
-        # Take a backward step (left then right)
-        print("Back")
-        walk(self.left, 90, 60, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
+    def wave(self, repetitions=3):
+        """Make a waving motion"""
+        print("Waving!")
+        if self.servo1:
+            for _ in range(repetitions):
+                move_servo_smooth(self.servo1, 0, angle_to_servo_value(60), 0.3)
+                move_servo_smooth(self.servo1, angle_to_servo_value(60), angle_to_servo_value(120), 0.3)
+            self.center()
 
-        walk(self.left, 60, 90, duration=step_time)
-        walk(self.right, 90, 120, duration=step_time)
-
-    def turn_left(self, step_time=0.5):
-        # Pivot left in place
-        print("left")
-        walk(self.left, 90, 60, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
-
-        walk(self.left, 60, 90, duration=step_time)
-        walk(self.right, 90, 60, duration=step_time)
-
-    def turn_right(self, step_time=0.5):
-        # Pivot right in place
-        print("right")
-        walk(self.left, 90, 120, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
-
-        walk(self.left, 120, 90, duration=step_time)
-        walk(self.right, 90, 120, duration=step_time)
+    def sad_droop(self, duration=1.0):
+        """Droop arms sadly when alone"""
+        print("Drooping arms sadly")
+        if self.servo1 and self.servo2:
+            move_servo_smooth(self.servo1, 0, angle_to_servo_value(120), duration)
+            move_servo_smooth(self.servo2, 0, angle_to_servo_value(60), duration)
+            time.sleep(0.2)
 
     def stop(self):
-        # Return to neutral
+        """Return to neutral position and close servos"""
         self.center()
+        if GPIO_AVAILABLE and self.servo1 and self.servo2:
+            self.servo1.close()
+            self.servo2.close()
+            print("[INFO] Servos closed")
 
 
-# We should define a Main() and run this on there
+# Test function for arm movements
 def main():
-    robot = ECSERobot(left_pwm, right_pwm)
+    robot = ArmRobot()
 
     try:
-        robot.forward()
-        robot.turn_left()
-        robot.forward()
-        robot.turn_right()
-        robot.backward()
+        print("Testing arm movements...")
+        robot.raise_arm()
+        time.sleep(2)
+        robot.wave()
+        time.sleep(1)
+        robot.sad_droop()
+        time.sleep(1)
+        robot.lower_arm()
         robot.stop()
-    finally:
-        left_pwm.stop()
-        right_pwm.stop()
-        GPIO.cleanup()
+    except KeyboardInterrupt:
+        print("\nStopping robot...")
+        robot.stop()
 
 
 if __name__ == "__main__":
