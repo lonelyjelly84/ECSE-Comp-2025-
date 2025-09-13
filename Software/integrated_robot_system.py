@@ -4,8 +4,51 @@ ECSE Integrated Robot System
 Combines face recognition + arm movements + personality + sensors + state machine
 """
 
-import time, math, smbus, pygame, threading, random, sys, os
-import numpy as np
+import time, math, threading, random, sys, os
+try:
+    import smbus2 as smbus  # Use smbus2 package but keep smbus interface
+except ImportError:
+    try:
+        import smbus  # Fallback to system smbus if available
+    except ImportError:
+        # Mock smbus for development
+        class MockSMBus:
+            def __init__(self, bus):
+                self.bus = bus
+                print(f"[MOCK] SMBus({bus})")
+            
+            def write_byte(self, addr, data):
+                print(f"[MOCK] write_byte(addr=0x{addr:02X}, data=0x{data:02X})")
+        
+        smbus = type('smbus', (), {'SMBus': MockSMBus})()
+
+try:
+    import pygame
+except ImportError:
+    # Mock pygame for development
+    class MockPygame:
+        class mixer:
+            class music:
+                @staticmethod
+                def load(file): print(f"[MOCK] pygame.mixer.music.load({file})")
+                @staticmethod
+                def play(loops=0): print(f"[MOCK] pygame.mixer.music.play(loops={loops})")
+                @staticmethod
+                def stop(): print(f"[MOCK] pygame.mixer.music.stop()")
+                @staticmethod
+                def get_busy(): return False
+            @staticmethod
+            def init(): print("[MOCK] pygame.mixer.init()")
+    pygame = MockPygame()
+
+try:
+    import numpy as np
+except ImportError:
+    # Basic numpy mock for development
+    class MockNumpy:
+        @staticmethod
+        def array(data): return data
+    np = MockNumpy()
 
 # Add firmware path to access robot controller
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Firmware'))
@@ -38,38 +81,43 @@ E_DELAY = 0.0005
 # Backlight
 LCD_BACKLIGHT = 0x08
 
-# Mock GPIO for development
+# GPIO setup with lgpio (optimized for Pi 4)
 try:
-    import RPi.GPIO as GPIO
+    import lgpio
+    # Pi 4 has gpiochip0 as the main chip
+    gpio_chip = lgpio.gpiochip_open(0)
+    GPIO_AVAILABLE = True
+    print("[INFO] lgpio initialized for Raspberry Pi 4")
 except ImportError:
-    class MockGPIO:
-        BCM = "BCM"
-        BOARD = "BOARD"
-        OUT = "OUT"
-        IN = "IN"
-        HIGH = 1
-        LOW = 0
-
-        def setmode(self, mode):
-            print(f"[MOCK] setmode({mode})")
-
-        def setwarnings(self, flag):
-            print(f"[MOCK] setwarnings({flag})")
-
-        def setup(self, pin, mode):
-            print(f"[MOCK] setup(pin={pin}, mode={mode})")
-
-        def output(self, pin, state):
-            print(f"[MOCK] GPIO.output(pin={pin}, state={state})")
-
-        def input(self, pin):
-            print(f"[MOCK] GPIO.input(pin={pin}) -> 0")
+    # Mock lgpio for development
+    class MockLGPIO:
+        def gpiochip_open(self, chip):
+            print(f"[MOCK] gpiochip_open({chip}) - Pi 4 simulation")
             return 0
-
-        def cleanup(self):
-            print("[MOCK] cleanup()")
-
-    GPIO = MockGPIO()
+            
+        def gpiochip_close(self, handle):
+            print(f"[MOCK] gpiochip_close({handle})")
+            
+        def gpio_claim_output(self, handle, gpio, level=0):
+            print(f"[MOCK] gpio_claim_output(handle={handle}, gpio={gpio}, level={level})")
+            
+        def gpio_claim_input(self, handle, gpio):
+            print(f"[MOCK] gpio_claim_input(handle={handle}, gpio={gpio})")
+            
+        def gpio_write(self, handle, gpio, level):
+            print(f"[MOCK] gpio_write(handle={handle}, gpio={gpio}, level={level})")
+            
+        def gpio_read(self, handle, gpio):
+            print(f"[MOCK] gpio_read(handle={handle}, gpio={gpio}) -> 0")
+            return 0
+            
+        def gpio_free(self, handle, gpio):
+            print(f"[MOCK] gpio_free(handle={handle}, gpio={gpio})")
+    
+    lgpio = MockLGPIO()
+    gpio_chip = lgpio.gpiochip_open(0)
+    GPIO_AVAILABLE = False
+    print("[MOCK] lgpio mock initialized for development")
 
 
 # LCD Functions
@@ -134,36 +182,59 @@ def lcd_display_string(message, line):
 def sense_setup():
     """Setup ultrasonic sensor"""
     try:
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(TRIG_PIN, GPIO.OUT)
-        GPIO.setup(ECHO_PIN, GPIO.IN)
-        GPIO.output(TRIG_PIN, GPIO.LOW)
-        time.sleep(0.1)
-        print("Ultrasonic sensor initialized")
-        return True
-    except:
-        print("Sensor setup failed - using mock")
+        if GPIO_AVAILABLE:
+            # Claim pins for output (TRIG) and input (ECHO)
+            lgpio.gpio_claim_output(gpio_chip, TRIG_PIN, 0)  # Start low
+            lgpio.gpio_claim_input(gpio_chip, ECHO_PIN)
+            time.sleep(0.1)
+            print("Ultrasonic sensor initialized")
+            return True
+        else:
+            print("GPIO not available - using mock sensor")
+            return False
+    except Exception as e:
+        print(f"Sensor setup failed: {e} - using mock")
         return False
 
 def get_distance():
-    """Get distance from ultrasonic sensor"""
+    """Get distance from ultrasonic sensor (optimized for Pi 4)"""
     try:
-        GPIO.output(TRIG_PIN, GPIO.HIGH)
-        time.sleep(0.00001)
-        GPIO.output(TRIG_PIN, GPIO.LOW)
-        
-        start_time = time.time()
-        while GPIO.input(ECHO_PIN) == 0:
+        if GPIO_AVAILABLE:
+            # Send trigger pulse
+            lgpio.gpio_write(gpio_chip, TRIG_PIN, 1)
+            time.sleep(0.00001)  # 10μs pulse
+            lgpio.gpio_write(gpio_chip, TRIG_PIN, 0)
+            
+            # Wait for echo start with timeout (Pi 4 optimized)
+            timeout = time.time() + 0.1  # 100ms timeout
             start_time = time.time()
+            while lgpio.gpio_read(gpio_chip, ECHO_PIN) == 0:
+                start_time = time.time()
+                if time.time() > timeout:
+                    return -1  # Timeout error
+                    
+            # Wait for echo end with timeout
+            timeout = time.time() + 0.1  # 100ms timeout
+            end_time = start_time
+            while lgpio.gpio_read(gpio_chip, ECHO_PIN) == 1:
+                end_time = time.time()
+                if time.time() > timeout:
+                    return -1  # Timeout error
+                    
+            elapsed = end_time - start_time
+            # Speed of sound at 20°C: 343 m/s = 34300 cm/s
+            distance = (elapsed * 34300) / 2
             
-        while GPIO.input(ECHO_PIN) == 1:
-            end_time = time.time()
-            
-        elapsed = end_time - start_time
-        distance = (elapsed * 34300) / 2
-        
-        return distance
-    except:
+            # Validate reasonable distance range (2cm to 400cm for HC-SR04)
+            if 2 <= distance <= 400:
+                return distance
+            else:
+                return -1  # Out of range
+        else:
+            # Mock distance for testing
+            return random.uniform(20, 100)
+    except Exception as e:
+        print(f"[SENSOR] Error reading distance: {e}")
         # Mock distance for testing
         return random.uniform(20, 100)
 
@@ -418,7 +489,11 @@ class IntegratedRobotSystem:
             pygame.mixer.music.stop()
             arm_servo1.stop()
             arm_servo2.stop()
-            GPIO.cleanup()
+            if GPIO_AVAILABLE:
+                # Free GPIO pins
+                lgpio.gpio_free(gpio_chip, TRIG_PIN)
+                lgpio.gpio_free(gpio_chip, ECHO_PIN)
+                lgpio.gpiochip_close(gpio_chip)
         except:
             pass
         

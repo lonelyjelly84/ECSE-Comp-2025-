@@ -1,26 +1,32 @@
 import time, math
 
+import time, math
+
 # Mock to try it on Desktop
 try:
-    import RPi.GPIO as GPIO
+    import lgpio
+    # For servo control, we'll use the hardware PWM channels available on Pi
+    # Pi has 2 hardware PWM channels on GPIO 12 and 13 (which map to BOARD pins 32 and 33)
+    # But since you're using BOARD pins 12 and 13, let's use GPIO chip with software PWM alternative
+    gpio_chip = lgpio.gpiochip_open(0)
+    GPIO_AVAILABLE = True
 except ImportError:
-
-    class MockGPIO:
-        BCM = "BCM"
-        BOARD = "BOARD"
-        OUT = "OUT"
-
-        def setmode(self, mode):
-            print(f"[MOCK] setmode({mode})")
-
-        def setwarnings(self, flag):
-            print(f"[MOCK] setwarnings({flag})")
-
-        def setup(self, pin, mode):
-            print(f"[MOCK] setup(pin={pin}, mode={mode})")
-
-        def cleanup(self):
-            print("[MOCK] cleanup()")
+    class MockLGPIO:
+        def gpiochip_open(self, chip):
+            print(f"[MOCK] gpiochip_open({chip})")
+            return 0
+            
+        def gpiochip_close(self, handle):
+            print(f"[MOCK] gpiochip_close({handle})")
+            
+        def gpio_claim_output(self, handle, gpio, level=0):
+            print(f"[MOCK] gpio_claim_output(handle={handle}, gpio={gpio}, level={level})")
+            
+        def gpio_write(self, handle, gpio, level):
+            print(f"[MOCK] gpio_write(handle={handle}, gpio={gpio}, level={level})")
+            
+        def gpio_free(self, handle, gpio):
+            print(f"[MOCK] gpio_free(handle={handle}, gpio={gpio})")
 
         class PWM:
             def __init__(self, pin, freq):
@@ -37,19 +43,78 @@ except ImportError:
             def stop(self):
                 print(f"[MOCK] stop()")
 
-    GPIO = MockGPIO()
+    lgpio = MockLGPIO()
+    gpio_chip = lgpio.gpiochip_open(0)
+    GPIO_AVAILABLE = False
 
-# Servo Configuration for Arm
-servo_pins = [12, 13]  # BOARD pin numbers for arm servos
+# Convert BOARD pin numbers to GPIO numbers
+# BOARD 12 = GPIO 18, BOARD 13 = GPIO 27
+BOARD_TO_GPIO = {12: 18, 13: 27}
+servo_board_pins = [12, 13]  # BOARD pin numbers for arm servos
+servo_gpio_pins = [BOARD_TO_GPIO[pin] for pin in servo_board_pins]  # Convert to GPIO numbers
 FREQ = 50  # 50Hz for SG90
 
-# Setup GPIO and PWM
-GPIO.setmode(GPIO.BOARD)
-pwms = []
+# Software PWM implementation for lgpio (Pi 4 optimized)
+class SoftwarePWM:
+    def __init__(self, gpio_chip, pin, freq):
+        self.gpio_chip = gpio_chip
+        self.pin = pin
+        self.freq = freq
+        self.period = 1.0 / freq  # 20ms for 50Hz
+        self.duty_cycle = 0
+        self.running = False
+        self.current_angle = 90  # Track current servo position
+        
+        if GPIO_AVAILABLE:
+            lgpio.gpio_claim_output(gpio_chip, pin, 0)
+        print(f"[PWM] Setup pin {pin} at {freq}Hz for Pi 4")
+    
+    def start(self, duty):
+        self.duty_cycle = duty
+        self.running = True
+        print(f"[PWM] Started pin {self.pin} with duty {duty}%")
+    
+    def ChangeDutyCycle(self, duty):
+        """Update servo position with optimized timing for Pi 4"""
+        self.duty_cycle = duty
+        
+        if GPIO_AVAILABLE and self.running:
+            # Convert duty cycle to servo angle (2.5% = 0°, 12.5% = 180°)
+            # For SG90: 1ms = 0°, 1.5ms = 90°, 2ms = 180°
+            pulse_width_ms = 1.0 + (duty - 2.5) * (1.0 / 10.0)  # 1-2ms range
+            pulse_width_s = pulse_width_ms / 1000.0
+            
+            # Send multiple pulses for stable positioning (Pi 4 optimization)
+            for _ in range(3):  # Send 3 pulses for reliable positioning
+                lgpio.gpio_write(self.gpio_chip, self.pin, 1)
+                time.sleep(pulse_width_s)
+                lgpio.gpio_write(self.gpio_chip, self.pin, 0)
+                time.sleep(self.period - pulse_width_s)  # Complete the 20ms cycle
+            
+            # Calculate and store current angle
+            self.current_angle = ((duty - 2.5) / 10.0) * 180.0
+            print(f"[PWM] Pin {self.pin} moved to {self.current_angle:.1f}° (duty: {duty:.1f}%)")
+        else:
+            print(f"[PWM] Mock: Pin {self.pin} duty to {duty}%")
+    
+    def stop(self):
+        self.running = False
+        if GPIO_AVAILABLE:
+            lgpio.gpio_write(self.gpio_chip, self.pin, 0)
+        print(f"[PWM] Stopped pin {self.pin}")
+    
+    def get_angle(self):
+        """Get current servo angle"""
+        return self.current_angle
 
-for pin in servo_pins:
-    GPIO.setup(pin, GPIO.OUT)
-    pwm = GPIO.PWM(pin, FREQ)
+# Setup PWM for servos
+pwms = []
+for i, gpio_pin in enumerate(servo_gpio_pins):
+    if GPIO_AVAILABLE:
+        pwm = SoftwarePWM(gpio_chip, gpio_pin, FREQ)
+    else:
+        # Use mock PWM for development
+        pwm = lgpio.PWM(servo_board_pins[i], FREQ)
     pwm.start(0)  # start with 0% duty cycle
     pwms.append(pwm)
 
@@ -127,7 +192,11 @@ def main():
     finally:
         arm_servo1.stop()
         arm_servo2.stop()
-        GPIO.cleanup()
+        if GPIO_AVAILABLE:
+            # Free GPIO pins
+            for gpio_pin in servo_gpio_pins:
+                lgpio.gpio_free(gpio_chip, gpio_pin)
+            lgpio.gpiochip_close(gpio_chip)
 
 
 if __name__ == "__main__":
