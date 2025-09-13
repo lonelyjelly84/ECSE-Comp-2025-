@@ -1,6 +1,10 @@
 # Core dependencies for ECSE Robot System
 # Computer vision and face recognition
+# Core dependencies for ECSE Robot System
+# Computer vision and face recognition
 opencv-python>=4.8.0
+
+# Numerical computing
 
 # Numerical computing
 numpy>=1.24.0
