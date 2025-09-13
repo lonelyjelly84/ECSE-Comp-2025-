@@ -39,8 +39,8 @@ except ImportError:
 
     GPIO = MockGPIO()
 
-# Servo Configuration
-servo_pins = [12, 13]  # BOARD pin numbers for left and right servo
+# Servo Configuration for Arm
+servo_pins = [12, 13]  # BOARD pin numbers for arm servos
 FREQ = 50  # 50Hz for SG90
 
 # Setup GPIO and PWM
@@ -53,16 +53,15 @@ for pin in servo_pins:
     pwm.start(0)  # start with 0% duty cycle
     pwms.append(pwm)
 
-# Assign left and right PWM objects
-left_pwm = pwms[0]
-right_pwm = pwms[1]
+# Assign arm servo PWM objects
+arm_servo1 = pwms[0]
+arm_servo2 = pwms[1]
 
 
-# Walk Function
-def walk(pwm, start_angle, end_angle, duration=0.5, steps=20):
+def move_servo(pwm, start_angle, end_angle, duration=0.5, steps=20):
     """
-    Walk a servo smoothly from start_angle to end_angle.
-    Uses cosine easing for smoother gait.
+    Move a servo smoothly from start_angle to end_angle.
+    Uses cosine easing for smoother movement.
     """
     for i in range(steps + 1):
         t = i / steps
@@ -73,74 +72,61 @@ def walk(pwm, start_angle, end_angle, duration=0.5, steps=20):
         time.sleep(duration / steps)
 
 
-# Robot Class
-class ECSERobot:
-    def __init__(self, left_servo, right_servo):
-        self.left = left_servo
-        self.right = right_servo
+# Arm Robot Class
+class ArmRobot:
+    def __init__(self, servo1, servo2):
+        self.servo1 = servo1
+        self.servo2 = servo2
         self.center()
 
     def center(self):
         # Move both servos to middle (90 degrees)
-        walk(self.left, 90, 90, duration=0.3)
-        walk(self.right, 90, 90, duration=0.3)
+        move_servo(self.servo1, 90, 90, duration=0.3)
+        move_servo(self.servo2, 90, 90, duration=0.3)
         time.sleep(0.1)
 
-    def forward(self, step_time=0.6):
-        # Take a forward step (left then right)
-        print("Forward")
-        walk(self.left, 90, 120, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
+    def raise_arm(self, duration=1.0):
+        # Raise the arm when face is detected
+        print("Raising arm - Face detected!")
+        move_servo(self.servo1, 90, 45, duration=duration)  # Move servo1 upward
+        move_servo(self.servo2, 90, 135, duration=duration)  # Move servo2 upward
+        time.sleep(0.5)
 
-        walk(self.left, 120, 90, duration=step_time)
-        walk(self.right, 90, 60, duration=step_time)
+    def lower_arm(self, duration=1.0):
+        # Lower the arm back to neutral position
+        print("Lowering arm")
+        move_servo(self.servo1, 45, 90, duration=duration)  # Return servo1 to center
+        move_servo(self.servo2, 135, 90, duration=duration)  # Return servo2 to center
+        time.sleep(0.5)
 
-    def backward(self, step_time=0.6):
-        # Take a backward step (left then right)
-        print("Back")
-        walk(self.left, 90, 60, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
-
-        walk(self.left, 60, 90, duration=step_time)
-        walk(self.right, 90, 120, duration=step_time)
-
-    def turn_left(self, step_time=0.5):
-        # Pivot left in place
-        print("left")
-        walk(self.left, 90, 60, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
-
-        walk(self.left, 60, 90, duration=step_time)
-        walk(self.right, 90, 60, duration=step_time)
-
-    def turn_right(self, step_time=0.5):
-        # Pivot right in place
-        print("right")
-        walk(self.left, 90, 120, duration=step_time)
-        walk(self.right, 90, 90, duration=step_time)
-
-        walk(self.left, 120, 90, duration=step_time)
-        walk(self.right, 90, 120, duration=step_time)
+    def wave(self, repetitions=3):
+        # Make a waving motion
+        print("Waving!")
+        for _ in range(repetitions):
+            move_servo(self.servo1, 90, 60, duration=0.3)
+            move_servo(self.servo1, 60, 120, duration=0.3)
+        self.center()
 
     def stop(self):
-        # Return to neutral
+        # Return to neutral position
         self.center()
 
 
-# We should define a Main() and run this on there
+# Test function for arm movements
 def main():
-    robot = ECSERobot(left_pwm, right_pwm)
+    robot = ArmRobot(arm_servo1, arm_servo2)
 
     try:
-        robot.forward()
-        robot.turn_left()
-        robot.forward()
-        robot.turn_right()
-        robot.backward()
+        # Test arm movements
+        robot.raise_arm()
+        time.sleep(2)
+        robot.wave()
+        time.sleep(1)
+        robot.lower_arm()
         robot.stop()
     finally:
-        left_pwm.stop()
-        right_pwm.stop()
+        arm_servo1.stop()
+        arm_servo2.stop()
         GPIO.cleanup()
 
 
