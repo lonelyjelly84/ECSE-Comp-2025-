@@ -52,7 +52,7 @@ except ImportError:
 
 # Add firmware path to access robot controller
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'Firmware'))
-from robot_control import ArmRobot, arm_servo1, arm_servo2, move_servo
+from robot_control import ArmRobot
 
 # Import face recognition system
 from face_hello import OpenCVFaceRecognitionSystem
@@ -61,10 +61,6 @@ from face_hello import OpenCVFaceRecognitionSystem
 channel = 1
 bus = smbus.SMBus(1)
 module_address = 0x27
-
-# Sensor GPIO
-TRIG_PIN = 17
-ECHO_PIN = 27
 
 # LCD Constants
 LCD_CHR = 1
@@ -81,43 +77,41 @@ E_DELAY = 0.0005
 # Backlight
 LCD_BACKLIGHT = 0x08
 
-# GPIO setup with lgpio (optimized for Pi 4)
+# GPIO setup with gpiozero (pre-installed on RPi)
 try:
-    import lgpio
-    # Pi 4 has gpiochip0 as the main chip
-    gpio_chip = lgpio.gpiochip_open(0)
+    from gpiozero import DigitalOutputDevice, DigitalInputDevice
     GPIO_AVAILABLE = True
-    print("[INFO] lgpio initialized for Raspberry Pi 4")
+    print("[INFO] gpiozero initialized for GPIO control")
 except ImportError:
-    # Mock lgpio for development
-    class MockLGPIO:
-        def gpiochip_open(self, chip):
-            print(f"[MOCK] gpiochip_open({chip}) - Pi 4 simulation")
-            return 0
+    # Mock gpiozero for development
+    class MockDigitalDevice:
+        def __init__(self, pin):
+            self.pin = pin
+            self._value = False
+            print(f"[MOCK] DigitalDevice created on pin {pin}")
             
-        def gpiochip_close(self, handle):
-            print(f"[MOCK] gpiochip_close({handle})")
+        @property 
+        def value(self):
+            return self._value
             
-        def gpio_claim_output(self, handle, gpio, level=0):
-            print(f"[MOCK] gpio_claim_output(handle={handle}, gpio={gpio}, level={level})")
+        @value.setter
+        def value(self, val):
+            self._value = val
+            print(f"[MOCK] GPIO pin {self.pin} set to {val}")
             
-        def gpio_claim_input(self, handle, gpio):
-            print(f"[MOCK] gpio_claim_input(handle={handle}, gpio={gpio})")
+        def on(self):
+            self.value = True
             
-        def gpio_write(self, handle, gpio, level):
-            print(f"[MOCK] gpio_write(handle={handle}, gpio={gpio}, level={level})")
+        def off(self):
+            self.value = False
             
-        def gpio_read(self, handle, gpio):
-            print(f"[MOCK] gpio_read(handle={handle}, gpio={gpio}) -> 0")
-            return 0
-            
-        def gpio_free(self, handle, gpio):
-            print(f"[MOCK] gpio_free(handle={handle}, gpio={gpio})")
+        def close(self):
+            print(f"[MOCK] GPIO pin {self.pin} closed")
     
-    lgpio = MockLGPIO()
-    gpio_chip = lgpio.gpiochip_open(0)
+    DigitalOutputDevice = MockDigitalDevice
+    DigitalInputDevice = MockDigitalDevice
     GPIO_AVAILABLE = False
-    print("[MOCK] lgpio mock initialized for development")
+    print("[MOCK] gpiozero mock initialized for development")
 
 
 # LCD Functions
@@ -179,13 +173,22 @@ def lcd_display_string(message, line):
 
 
 # Sensor Functions
+TRIG_PIN = 17  # GPIO 17 for ultrasonic trigger
+ECHO_PIN = 27  # GPIO 27 for ultrasonic echo
+
+# Initialize GPIO pins for ultrasonic sensor
+trig_pin = None
+echo_pin = None
+
 def sense_setup():
     """Setup ultrasonic sensor"""
+    global trig_pin, echo_pin
     try:
         if GPIO_AVAILABLE:
-            # Claim pins for output (TRIG) and input (ECHO)
-            lgpio.gpio_claim_output(gpio_chip, TRIG_PIN, 0)  # Start low
-            lgpio.gpio_claim_input(gpio_chip, ECHO_PIN)
+            # Create GPIO objects for ultrasonic sensor
+            trig_pin = DigitalOutputDevice(TRIG_PIN)
+            echo_pin = DigitalInputDevice(ECHO_PIN)
+            trig_pin.off()  # Start low
             time.sleep(0.1)
             print("Ultrasonic sensor initialized")
             return True
@@ -197,18 +200,18 @@ def sense_setup():
         return False
 
 def get_distance():
-    """Get distance from ultrasonic sensor (optimized for Pi 4)"""
+    """Get distance from ultrasonic sensor using gpiozero"""
     try:
-        if GPIO_AVAILABLE:
+        if GPIO_AVAILABLE and trig_pin and echo_pin:
             # Send trigger pulse
-            lgpio.gpio_write(gpio_chip, TRIG_PIN, 1)
+            trig_pin.on()
             time.sleep(0.00001)  # 10μs pulse
-            lgpio.gpio_write(gpio_chip, TRIG_PIN, 0)
+            trig_pin.off()
             
-            # Wait for echo start with timeout (Pi 4 optimized)
+            # Wait for echo start with timeout
             timeout = time.time() + 0.1  # 100ms timeout
             start_time = time.time()
-            while lgpio.gpio_read(gpio_chip, ECHO_PIN) == 0:
+            while not echo_pin.value:
                 start_time = time.time()
                 if time.time() > timeout:
                     return -1  # Timeout error
@@ -216,7 +219,7 @@ def get_distance():
             # Wait for echo end with timeout
             timeout = time.time() + 0.1  # 100ms timeout
             end_time = start_time
-            while lgpio.gpio_read(gpio_chip, ECHO_PIN) == 1:
+            while echo_pin.value:
                 end_time = time.time()
                 if time.time() > timeout:
                     return -1  # Timeout error
@@ -274,7 +277,7 @@ class IntegratedRobotSystem:
         self.sensor_available = sense_setup()
         
         # Initialize face recognition and arm control
-        self.arm_robot = ArmRobot(arm_servo1, arm_servo2)
+        self.arm_robot = ArmRobot()  # New gpiozero version doesn't need servo args
         self.face_system = OpenCVFaceRecognitionSystem()
         
         # State management
@@ -410,9 +413,7 @@ class IntegratedRobotSystem:
     def sad_arm_gesture(self):
         """Sad drooping gesture"""
         print("😢 Making sad gesture...")
-        move_servo(self.arm_robot.servo1, 90, 150, duration=2.0)  # Droop down
-        time.sleep(1)
-        move_servo(self.arm_robot.servo1, 150, 90, duration=1.5)  # Back to center
+        self.arm_robot.sad_droop(duration=2.0)  # Use built-in sad gesture
     
     def enthusiastic_greeting(self):
         """Happy enthusiastic greeting for known people"""
@@ -420,11 +421,8 @@ class IntegratedRobotSystem:
         self.arm_robot.raise_arm(duration=0.8)
         time.sleep(0.5)
         
-        # Wave up and down enthusiastically
-        for _ in range(3):
-            move_servo(self.arm_robot.servo1, 90, 45, duration=0.3)  # Up
-            move_servo(self.arm_robot.servo1, 45, 135, duration=0.3)  # Down
-        
+        # Use built-in wave function
+        self.arm_robot.wave(repetitions=3)
         self.arm_robot.center()
     
     def simple_greeting(self):
@@ -437,7 +435,9 @@ class IntegratedRobotSystem:
     def defensive_gesture(self):
         """Defensive gesture when too close"""
         print("🛡️ Defensive gesture")
-        move_servo(self.arm_robot.servo1, 90, 60, duration=0.5)  # Slight back
+        # Create a simple defensive position - slightly raise arms
+        if self.arm_robot.servo1:
+            self.arm_robot.servo1.value = -0.33  # ~60 degrees
         time.sleep(1)
         self.arm_robot.center()
     
@@ -487,13 +487,8 @@ class IntegratedRobotSystem:
         
         try:
             pygame.mixer.music.stop()
-            arm_servo1.stop()
-            arm_servo2.stop()
-            if GPIO_AVAILABLE:
-                # Free GPIO pins
-                lgpio.gpio_free(gpio_chip, TRIG_PIN)
-                lgpio.gpio_free(gpio_chip, ECHO_PIN)
-                lgpio.gpiochip_close(gpio_chip)
+            self.arm_robot.stop()  # Use robot's built-in stop method
+            # No need to manually free GPIO pins with gpiozero
         except:
             pass
         
