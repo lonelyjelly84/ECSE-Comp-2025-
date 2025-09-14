@@ -411,7 +411,7 @@ def detect_face_quick():
     """
     Quick face detection - checks if any face is present without recognition
     Returns True if a face is detected, False otherwise
-    Uses optimizations for real-time performance
+    Uses optimizations for real-time performance with improved reliability
     """
     try:
         # Initialize video capture
@@ -425,13 +425,24 @@ def detect_face_quick():
         video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
         video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
         video_capture.set(cv2.CAP_PROP_FPS, 15)
+        video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for faster capture
         
-        # Capture a single frame
+        # Allow camera to warm up and stabilize
+        time.sleep(0.1)
+        
+        # Capture multiple frames to ensure camera is ready
+        # Discard first few frames as they might be corrupted
+        for _ in range(3):
+            ret, frame = video_capture.read()
+            if not ret:
+                continue
+        
+        # Capture the actual frame for detection
         ret, frame = video_capture.read()
         video_capture.release()
         
-        if not ret:
-            print("Failed to capture frame")
+        if not ret or frame is None:
+            print("Failed to capture frame for face detection")
             return False
         
         # Resize frame for faster processing
@@ -446,7 +457,7 @@ def detect_face_quick():
         # Detect faces using the cascade classifier with optimized parameters
         faces = face_cascade.detectMultiScale(
             gray, 
-            scaleFactor=1.2,  # Slightly larger scale factor for speed
+            scaleFactor=1.1,  # More sensitive detection
             minNeighbors=3,   # Reduced for faster detection
             minSize=(20, 20), # Smaller minimum size for small frame
             flags=cv2.CASCADE_SCALE_IMAGE
@@ -455,7 +466,9 @@ def detect_face_quick():
         # Return True if any faces detected
         face_detected = len(faces) > 0
         if face_detected:
-            print(f"Face detected! Found {len(faces)} face(s)")
+            print(f"✓ Face detected! Found {len(faces)} face(s)")
+        else:
+            print("✗ No face detected")
         
         return face_detected
         
@@ -549,13 +562,20 @@ def check_current_condition():
     proximate = am_u_too_close()
     face = detect_face_quick()  # Use actual face detection
     
+    # Debug output to track state transitions
+    print(f"Condition check: proximate={proximate}, face={face}")
+    
     if not proximate and not face:
+        print("→ State 0: Idle (no face, not close)")
         return 0  # Idle
     elif not proximate and face:
+        print("→ State 1: FDF (face detected, not close)")
         return 1  # FDF
     elif proximate and not face:
+        print("→ State 2: NFDC (no face, close)")
         return 2  # NFDC
     elif proximate and face:
+        print("→ State 3: FDC (face detected, close)")
         return 3  # FDC
 
 
@@ -563,6 +583,7 @@ def FDF():
     #Face Detected and Far
     #Can transition to FDC if person gets close, or back to idle if face lost
     
+    print("Entering FDF state - Face Detected Far")
     servo2 = GPIOInit(servo_pin=13)
     
     if pygame and pygame.mixer.music.get_busy():
@@ -577,48 +598,71 @@ def FDF():
     wave(servo2, wave_count=3, wave_speed=0.4)
     
     # Break up the 3 second wait with condition checks
-    for _ in range(3):
+    print("FDF: Initial 3-second wait with condition checks...")
+    for i in range(3):
         time.sleep(1)
+        print(f"FDF: Check {i+1}/3 during initial wait")
         current_state = check_current_condition()
         if current_state != 1:  # Not FDF anymore
+            print(f"FDF: State changed during initial wait, returning {current_state}")
             return current_state
     
     # Stay in FDF while face detected and far
+    print("FDF: Entering main loop...")
+    loop_count = 0
     while True:
+        loop_count += 1
+        print(f"FDF: Main loop iteration #{loop_count}")
+        print("FDF: Checking current condition in main loop...")
         current_state = check_current_condition()
         
         if current_state == 3:  # Face detected and close -> transition to FDC
+            print("FDF: Transitioning to FDC (face close)")
             return 3
         elif current_state == 0:  # No face, not close -> back to idle
+            print("FDF: Transitioning to Idle (face lost)")
             return 0
         elif current_state == 2:  # No face but close -> transition to NFDC
+            print("FDF: Transitioning to NFDC (no face but close)")
             return 2
         elif current_state == 1:  # Still FDF - continue friendly behavior
+            print("FDF: Continuing in FDF state - showing friendly behavior")
             lcd_display_string("I have a good feeling about you!", 1)
             lcd_display_string("I'm so happy to see you!", 2)
             
             # Break up the 3 second wait with frequent checks
-            for _ in range(3):
+            print("FDF: First 3-second friendly wait...")
+            for i in range(3):
                 time.sleep(1)
+                print(f"FDF: Check {i+1}/3 during friendly wait")
                 current_state = check_current_condition()
                 if current_state != 1:  # Exit early if state changes
+                    print(f"FDF: State changed during friendly wait, returning {current_state}")
                     return current_state
             
             # Occasional friendly wave
             if random.randint(1, 3) == 1:
+                print("FDF: Performing friendly wave")
                 wave(servo2, wave_count=1, wave_speed=0.5)
             
             lcd_display_string("I love you!", 1)
             lcd_display_string("<3", 2)
             
             # Break up another 3 second wait with checks
-            for _ in range(3):
+            print("FDF: Second 3-second friendly wait...")
+            for i in range(3):
                 time.sleep(1)
+                print(f"FDF: Check {i+1}/3 during second friendly wait")
                 current_state = check_current_condition()
                 if current_state != 1:  # Exit early if state changes
+                    print(f"FDF: State changed during second friendly wait, returning {current_state}")
                     return current_state
+                    
+            # Add a brief pause before next loop iteration to reduce camera stress
+            time.sleep(0.2)
         else:
             # Unexpected state, return to idle
+            print(f"FDF: Unexpected state {current_state}, returning to idle")
             return 0
 
 def FDC():
