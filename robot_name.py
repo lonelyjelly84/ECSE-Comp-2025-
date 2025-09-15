@@ -74,9 +74,31 @@ else:
     
 module_address = 0x27
 
-#Sensor GPIO
-TRIG_PIN = 17
-ECHO_PIN = 27
+#Sensor GPIO - Compatible with both Pi 3 and Pi 4
+TRIG_PIN = 17  # GPIO 17 - Pin 11 (same on Pi 3 and Pi 4)
+ECHO_PIN = 27  # GPIO 27 - Pin 13 (same on Pi 3 and Pi 4)
+
+# Servo GPIO - Using BCM numbering (compatible across Pi models)
+# GPIO 13 = Physical Pin 33 (same on Pi 3 and Pi 4)
+SERVO_PIN = 13
+
+# Pi 3/4 Detection and Performance Settings
+def detect_pi_model():
+    """Detect Raspberry Pi model for optimization"""
+    try:
+        with open('/proc/device-tree/model', 'r') as f:
+            model = f.read().strip()
+            if 'Raspberry Pi 3' in model:
+                return 'Pi3'
+            elif 'Raspberry Pi 4' in model:
+                return 'Pi4'
+            else:
+                return 'Unknown'
+    except:
+        return 'Unknown'
+
+PI_MODEL = detect_pi_model()
+print(f"Detected hardware: {PI_MODEL}")
 
 #LCD Constants
 LCD_CHR = 1
@@ -409,30 +431,66 @@ def initialize_face_detection():
 
 def detect_face_quick():
     """
-    Quick face detection - checks if any face is present without recognition
+    Quick face detection - optimized for both Pi 3 and Pi 4
     Returns True if a face is detected, False otherwise
-    Uses optimizations for real-time performance with improved reliability
+    Uses optimizations for real-time performance with Pi 3 compatibility
     """
     try:
-        # Initialize video capture
-        video_capture = cv2.VideoCapture(0)
+        # Detect Pi model for optimization
+        pi3_mode = False
+        try:
+            with open('/proc/device-tree/model', 'r') as f:
+                model = f.read()
+                pi3_mode = 'Raspberry Pi 3' in model
+        except:
+            pass
         
-        if not video_capture.isOpened():
-            print("Camera not available")
+        # Find working camera index (fixes "camera index out of range" error)
+        video_capture = None
+        working_camera_index = None
+        
+        for camera_index in range(5):  # Check indices 0-4
+            try:
+                test_cap = cv2.VideoCapture(camera_index)
+                if test_cap.isOpened():
+                    ret, frame = test_cap.read()
+                    if ret and frame is not None:
+                        video_capture = test_cap
+                        working_camera_index = camera_index
+                        if pi3_mode:
+                            print(f"✓ Camera {camera_index} working on Pi 3")
+                        break
+                    else:
+                        test_cap.release()
+                else:
+                    test_cap.release()
+            except:
+                continue
+        
+        if video_capture is None or not video_capture.isOpened():
+            print("❌ No camera available for face detection")
             return False
         
-        # Set camera properties for faster capture
-        video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-        video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-        video_capture.set(cv2.CAP_PROP_FPS, 15)
+        # Pi 3 optimized camera settings
+        if pi3_mode:
+            video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+            video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+            video_capture.set(cv2.CAP_PROP_FPS, 10)
+        else:
+            video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+            video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+            video_capture.set(cv2.CAP_PROP_FPS, 15)
+            
         video_capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for faster capture
         
-        # Allow camera to warm up and stabilize
-        time.sleep(0.1)
+        # Allow camera to warm up and stabilize (longer for Pi 3)
+        warm_up_time = 0.2 if pi3_mode else 0.1
+        time.sleep(warm_up_time)
         
         # Capture multiple frames to ensure camera is ready
         # Discard first few frames as they might be corrupted
-        for _ in range(3):
+        capture_attempts = 5 if pi3_mode else 3
+        for _ in range(capture_attempts):
             ret, frame = video_capture.read()
             if not ret:
                 continue
@@ -442,11 +500,14 @@ def detect_face_quick():
         video_capture.release()
         
         if not ret or frame is None:
-            print("Failed to capture frame for face detection")
+            print("❌ Failed to capture frame for face detection")
             return False
         
-        # Resize frame for faster processing
-        small_frame = cv2.resize(frame, (160, 120))
+        # Pi 3 optimized frame processing - much more conservative
+        if pi3_mode:
+            small_frame = cv2.resize(frame, (80, 60))  # Much smaller for Pi 3
+        else:
+            small_frame = cv2.resize(frame, (160, 120))
         
         # Convert to grayscale for face detection
         gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
@@ -454,26 +515,51 @@ def detect_face_quick():
         # Create face cascade classifier directly
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         
+        # Pi 3 optimized detection parameters - much more lenient
+        if pi3_mode:
+            scale_factor = 1.5  # Much faster but less accurate for Pi 3
+            min_neighbors = 1   # Very reduced for speed
+            min_size = (10, 10) # Much smaller minimum
+        else:
+            scale_factor = 1.1  # More sensitive detection
+            min_neighbors = 3   # Standard
+            min_size = (20, 20) # Standard
+        
         # Detect faces using the cascade classifier with optimized parameters
         faces = face_cascade.detectMultiScale(
             gray, 
-            scaleFactor=1.1,  # More sensitive detection
-            minNeighbors=3,   # Reduced for faster detection
-            minSize=(20, 20), # Smaller minimum size for small frame
+            scaleFactor=scale_factor,
+            minNeighbors=min_neighbors,
+            minSize=min_size,
             flags=cv2.CASCADE_SCALE_IMAGE
         )
         
         # Return True if any faces detected
         face_detected = len(faces) > 0
         if face_detected:
-            print(f"✓ Face detected! Found {len(faces)} face(s)")
+            print(f"✓ Face detected! Found {len(faces)} face(s) [Pi3: {pi3_mode}]")
         else:
-            print("✗ No face detected")
+            # Only print occasionally to avoid spam
+            if hasattr(detect_face_quick, 'no_face_count'):
+                detect_face_quick.no_face_count += 1
+            else:
+                detect_face_quick.no_face_count = 1
+            
+            if detect_face_quick.no_face_count % 10 == 0:  # Print every 10th check
+                print(f"ℹ No face detected (check #{detect_face_quick.no_face_count}) [Pi3: {pi3_mode}]")
+        
+        # Add processing delay for Pi 3 to prevent overload
+        if pi3_mode:
+            time.sleep(0.2)  # Longer delay for Pi 3
+        else:
+            time.sleep(0.05)
         
         return face_detected
         
     except Exception as e:
-        print(f"Error in face detection: {e}")
+        print(f"❌ Face detection error: {e}")
+        # Add delay to prevent rapid error loops
+        time.sleep(0.5)
         return False
 
 
@@ -583,8 +669,8 @@ def FDF():
     #Face Detected and Far
     #Can transition to FDC if person gets close, or back to idle if face lost
     
-    print("Entering FDF state - Face Detected Far")
-    servo2 = GPIOInit(servo_pin=13)
+    print(f"Entering FDF state - Face Detected Far [Hardware: {PI_MODEL}]")
+    servo2 = GPIOInit(servo_pin=SERVO_PIN)
     
     if pygame and pygame.mixer.music.get_busy():
         time.sleep(1)
@@ -597,11 +683,16 @@ def FDF():
     # Friendly wave when detecting face at safe distance
     wave(servo2, wave_count=3, wave_speed=0.4)
     
-    # Break up the 3 second wait with condition checks
-    print("FDF: Initial 3-second wait with condition checks...")
-    for i in range(3):
-        time.sleep(1)
-        print(f"FDF: Check {i+1}/3 during initial wait")
+    # Pi 3 optimized timing - longer intervals for condition checks
+    check_interval = 1.5 if PI_MODEL == 'Pi3' else 1.0
+    print(f"FDF: Using {check_interval}s check intervals for {PI_MODEL}")
+    
+    # Break up the initial wait with condition checks
+    print("FDF: Initial wait with condition checks...")
+    initial_checks = 2 if PI_MODEL == 'Pi3' else 3
+    for i in range(initial_checks):
+        time.sleep(check_interval)
+        print(f"FDF: Check {i+1}/{initial_checks} during initial wait")
         current_state = check_current_condition()
         if current_state != 1:  # Not FDF anymore
             print(f"FDF: State changed during initial wait, returning {current_state}")
@@ -630,36 +721,39 @@ def FDF():
             lcd_display_string("I have a good feeling about you!", 1)
             lcd_display_string("I'm so happy to see you!", 2)
             
-            # Break up the 3 second wait with frequent checks
-            print("FDF: First 3-second friendly wait...")
-            for i in range(3):
-                time.sleep(1)
-                print(f"FDF: Check {i+1}/3 during friendly wait")
+            # Pi 3 optimized friendly behavior timing
+            friendly_checks = 2 if PI_MODEL == 'Pi3' else 3
+            print(f"FDF: First {friendly_checks}-check friendly wait...")
+            for i in range(friendly_checks):
+                time.sleep(check_interval)
+                print(f"FDF: Check {i+1}/{friendly_checks} during friendly wait")
                 current_state = check_current_condition()
                 if current_state != 1:  # Exit early if state changes
                     print(f"FDF: State changed during friendly wait, returning {current_state}")
                     return current_state
             
-            # Occasional friendly wave
-            if random.randint(1, 3) == 1:
+            # Occasional friendly wave (less frequent on Pi 3 to reduce load)
+            wave_chance = 4 if PI_MODEL == 'Pi3' else 3
+            if random.randint(1, wave_chance) == 1:
                 print("FDF: Performing friendly wave")
                 wave(servo2, wave_count=1, wave_speed=0.5)
             
             lcd_display_string("I love you!", 1)
             lcd_display_string("<3", 2)
             
-            # Break up another 3 second wait with checks
-            print("FDF: Second 3-second friendly wait...")
-            for i in range(3):
-                time.sleep(1)
-                print(f"FDF: Check {i+1}/3 during second friendly wait")
+            # Break up another wait with checks
+            print(f"FDF: Second {friendly_checks}-check friendly wait...")
+            for i in range(friendly_checks):
+                time.sleep(check_interval)
+                print(f"FDF: Check {i+1}/{friendly_checks} during second friendly wait")
                 current_state = check_current_condition()
                 if current_state != 1:  # Exit early if state changes
                     print(f"FDF: State changed during second friendly wait, returning {current_state}")
                     return current_state
                     
-            # Add a brief pause before next loop iteration to reduce camera stress
-            time.sleep(0.2)
+            # Add a brief pause before next loop iteration to reduce stress on Pi 3
+            pause_time = 0.3 if PI_MODEL == 'Pi3' else 0.2
+            time.sleep(pause_time)
         else:
             # Unexpected state, return to idle
             print(f"FDF: Unexpected state {current_state}, returning to idle")
@@ -915,7 +1009,9 @@ def main():
                 print(f"Invalid state {current_state}, returning to idle")
                 current_state = 0
             
-            time.sleep(0.05)  # Reduced delay for faster state transitions
+            # Pi 3 gets longer delays between state transitions to prevent overload
+            delay = 0.3 if PI_MODEL == 'Pi3' else 0.1
+            time.sleep(delay)
     except KeyboardInterrupt:
         print("\nRobot stopped by user")
     except Exception as e:
